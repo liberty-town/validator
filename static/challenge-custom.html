@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Challenge</title>
+        <script src="./vue.global.js"></script>
+    </head>
+<body>
+    <div id="app">
+        <div v-if="loading">
+            <span>{{loadingStatus}}</span>
+            <div class="loader"></div>
+        </div>
+        <div v-else-if="imageIndex < images.length">
+
+            <div>
+                <span>Rotate the images...</span>
+            </div>
+
+            <div style="padding-top: 10px">
+                <span style="margin-right: 20px;">Challenge {{imageIndex+1}} of {{images.length}}</span>
+                <button @click="loadChallenge" style="color: red">Reset</button>
+            </div>
+
+            <div style="padding-top: 20px">
+                <img class="challenge" :src="`data:image/jpeg;base64,${images[imageIndex]}`"
+                :style="`transform: rotate(${angle}deg); -webkit-transform: rotate(${angle}deg); -moz-transform: rotate(${angle}deg)`"/>
+            </div>
+            <div style="padding-top: 20px">
+                <button style="margin-right: 20px" @click="angle=(angle-45)%360">left</button>
+                <button @click="angle=(angle+45)%360">right</button>
+            </div>
+            <div style="padding-top: 20px">
+                <button v-if="imageIndex < images.length-1" @click="saveSolution">Next Image</button>
+                <button v-if="imageIndex === images.length-1" @click="submitSolution">Submit</button>
+            </div>
+        </div>
+        <span v-if="error" style="color: red">Error {{ error }}</span>
+        <div v-if="showResult && solution">
+            <div>
+                <span>Copy and Paste this token: </span>
+            </div>
+            <textarea cols="100" rows="5">{{solution}}</textarea>
+        </div>
+    </div>
+</body>
+<style>
+    html, body{
+        height: 100%;
+        margin: 0;
+        text-align: center;
+    }
+    .challenge{
+        border-radius: 50%;
+    }
+
+
+    .loader {
+        border: 5px solid #f3f3f3; /* Light grey */
+        border-top: 5px solid #3498db; /* Blue */
+        border-radius: 50%;
+        width: 20px;
+        height: 20px;
+        animation: spin 2s linear infinite;
+    }
+
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+
+</style>
+<script type="module">
+
+    function getSearchParameters() {
+        const prmstr = window.location.search.substr(1);
+        return prmstr != null && prmstr !== "" ? transformToAssocArray(prmstr) : {};
+    }
+
+    function transformToAssocArray( prmstr ) {
+        const params = {};
+        const prmarr = prmstr.split("&");
+        for ( var i = 0; i < prmarr.length; i++) {
+            const tmparr = prmarr[i].split("=");
+            params[tmparr[0]] = tmparr[1];
+        }
+        return params;
+    }
+
+    const params = getSearchParameters();
+    const body = document.body;
+    const html = document.documentElement;
+
+    Vue.createApp({
+        data(){
+            return{
+                error: "",
+                showResult: params.showResult && params.showResult === "true",
+                answers: [],
+                lastHeight: 0,
+                lastWidth: 0,
+                resizeInterval: null,
+                origin: window.location.protocol+"//"+window.location.host,
+                id: "",
+                images: [],
+                imageIndex: 0,
+                angle: 0,
+                loading: false,
+                loadingStatus: "",
+                proof: params.proof ? JSON.parse(params.proof) : { message:"", size: 0, signature: "" },
+            }
+        },
+        methods:{
+
+            resize() {
+
+                const height = Math.floor( Math.max(body.scrollHeight, body.offsetHeight, body.getBoundingClientRect().height, html.clientHeight, html.scrollHeight, html.offsetHeight));
+
+                if (Math.abs( height - this.lastHeight) > 2) {
+                    this.lastHeight = height;
+                    window.top.postMessage({type: "resizeHeight", height: height }, "*")
+                }
+                if (Math.abs( document.body.scrollWidth - this.lastWidth) > 2) {
+                    this.lastWidth = Math.floor( document.body.scrollWidth);
+                    window.top.postMessage({type: "resizeWidth", width: this.lastWidth }, "*")
+                }
+            },
+
+            messageReceived (event) {
+
+                if (typeof event.data !== "object") return
+
+                const object = event.data
+                if (typeof object !== "object") return
+
+                if (object.type === "init" && object.init ) {
+                    this.proof = JSON.parse(object.init.proof)
+                    console.log("proof", this.proof)
+                    this.loadChallenge()
+                }
+
+            },
+
+            async loadChallenge(){
+                try{
+
+                    this.error = ""
+                    this.loading = true
+                    this.loadingStatus = "Loading a new challenge"
+
+                    this.id = ""
+                    this.images = []
+                    this.answers = []
+                    this.angle = 0
+
+                    const response = await fetch(this.origin+"/challenge-custom", {
+                        method: 'POST',
+                        headers: {
+                            'Accept': 'application/json',
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            message: this.proof.message,
+                            size: Number.parseInt(this.proof.size),
+                            signature: this.proof.signature,
+                        })
+                    })
+                    const out = await response.json()
+                    this.id = out.id
+                    const images = [out.im0, out.im1, out.im2, out.im3, out.im4, out.im5]
+                    this.images = images.filter ( it => it )
+                    this.imageIndex = 0
+                    this.answers = []
+                    this.angle = 0
+                }catch(e){
+                    this.error = `Error fetching challenge: ${e.toString()}`
+                }finally{
+                    this.loading = false
+                }
+
+            },
+
+            saveSolution(){
+                this.answers[this.imageIndex] = this.angle
+                this.angle = 0
+                this.imageIndex++
+            },
+
+            submitSolution(){
+                this.saveSolution()
+                this.solution = JSON.stringify({
+                    id: this.id,
+                    answers: this.answers
+                })
+                window.top.postMessage({type: "solution", solution: this.solution}, "*")
+            },
+
+        },
+        mounted(){
+            window.addEventListener("message", this.messageReceived, false);
+
+            this.resizeInterval = setInterval(this.resize, 200)
+            this.resize()
+
+            window.top.postMessage({type: "ready"}, "*")
+        },
+
+        beforeUnmount(){
+            clearInterval(this.resizeInterval)
+            window.removeEventListener("message", this.messageReceived, false);
+        }
+    }).mount('#app')
+</script>
+</html>

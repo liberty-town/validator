@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Challenge</title>
+    <script src="./vue.global.js"></script>
+    <script src="./hcaptcha-vue3.umd.js"></script>
+</head>
+<body>
+<div id="app">
+    <span>Please solve the captcha...</span>
+    <vue-hcaptcha v-if="sitekey" :sitekey="sitekey" @error="onError" @verify="onVerify" ></vue-hcaptcha>
+    <span v-if="error" style="color: red">Error {{ error }}</span>
+    <div v-if="showResult && solution">
+        <div>
+            <span>Copy and Paste this token: </span>
+        </div>
+        <textarea cols="100" rows="5">{{solution}}</textarea>
+    </div>
+</div>
+</body>
+<style>
+    html, body{
+        height: 100%;
+        margin: 0;
+    }
+</style>
+<script type="module">
+    function getSearchParameters() {
+        const prmstr = window.location.search.substr(1);
+        return prmstr != null && prmstr !== "" ? transformToAssocArray(prmstr) : {};
+    }
+
+    function transformToAssocArray( prmstr ) {
+        const params = {};
+        const prmarr = prmstr.split("&");
+        for ( var i = 0; i < prmarr.length; i++) {
+            const tmparr = prmarr[i].split("=");
+            params[tmparr[0]] = tmparr[1];
+        }
+        return params;
+    }
+
+    const params = getSearchParameters();
+    const body = document.body;
+    const html = document.documentElement;
+
+    Vue.createApp({
+        data(){
+            return{
+                error: "",
+                showResult: params.showResult && params.showResult === "true",
+                solution: "",
+                lastHeight: 0,
+                lastWidth: 0,
+                resizeInterval: null,
+                sitekey: params.sitekey ? params.sitekey : "",
+            }
+        },
+        methods:{
+            onError(e){
+                this.error = e
+            },
+            onVerify(token, eKey) {
+                this.solution = token
+                window.top.postMessage({type: "solution", solution: this.solution}, "*")
+            },
+            resize() {
+
+                const height = Math.floor( Math.max(body.scrollHeight, body.offsetHeight, body.getBoundingClientRect().height, html.clientHeight, html.scrollHeight, html.offsetHeight));
+
+                if (Math.abs( height - this.lastHeight) > 2) {
+                    this.lastHeight = height;
+                    window.top.postMessage({type: "resizeHeight", height: height }, "*")
+                }
+                if (Math.abs( document.body.scrollWidth - this.lastWidth) > 2) {
+                    this.lastWidth = Math.floor( document.body.scrollWidth);
+                    window.top.postMessage({type: "resizeWidth", width: this.lastWidth }, "*")
+                }
+            },
+
+            messageReceived (event) {
+
+                if (typeof event.data !== "object") return
+
+                const object = event.data
+                if (typeof object !== "object") return
+
+                if (object.type === "init" && object.init ) this.sitekey = object.init.sitekey
+
+            }
+
+        },
+        mounted(){
+            window.addEventListener("message", this.messageReceived, false);
+
+            this.resizeInterval = setInterval(this.resize, 200)
+            this.resize()
+
+            window.top.postMessage({type: "ready"}, "*")
+        },
+        beforeUnmount(){
+            clearInterval(this.resizeInterval)
+            window.removeEventListener("message", this.messageReceived, false);
+        }
+    }).component('VueHcaptcha', VueHcaptcha)
+        .mount('#app')
+</script>
+</html>
