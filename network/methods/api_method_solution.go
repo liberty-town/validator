@@ -128,11 +128,64 @@ func MethodSolution(r *http.Request, args *api_types.ValidatorSolutionRequest, r
 		return errors.New("challenge is required")
 	}
 
+	var votePayload *api_types.ValidatorCheckVoteExtraRequest
+	var voteOutPayload *api_types.ValidatorSolutionVoteExtraResult
+
+	if args.Extra != nil {
+		switch args.Extra.Version {
+		case api_types.VALIDATOR_EXTRA_VOTE:
+
+			if args.Extra.Data == nil {
+				return errors.New("extra data is null")
+			}
+
+			dbByte, err := json.Marshal(args.Extra.Data)
+			if err != nil {
+				return err
+			}
+
+			votePayload = &api_types.ValidatorCheckVoteExtraRequest{}
+			if err = json.Unmarshal(dbByte, votePayload); err != nil {
+				return err
+			}
+
+			voteOutPayload = &api_types.ValidatorSolutionVoteExtraResult{}
+
+			if config.CHALLENGE_TYPE != validation_type.VALIDATOR_CHALLENGE_NO_CAPTCHA {
+				if votePayload.Vote > 1 || votePayload.Vote < -1 || votePayload.Vote == 0 {
+					return errors.New("invalid vote")
+				}
+
+				votedAlready, err := validator_store.CheckVotedAlready(addr, votePayload.Identity)
+				if err != nil {
+					return err
+				}
+				if votedAlready {
+					return errors.New("You already voted!")
+				}
+			}
+
+			var poll *validator_store.StoredPoll
+			if poll, err = validator_store.ProcessVote(addr, votePayload.Identity, votePayload.Vote); err != nil {
+				return err
+			}
+			voteOutPayload.Upvotes = poll.Upvotes     //read it
+			voteOutPayload.Downvotes = poll.Downvotes //read it
+			reply.Extra = voteOutPayload
+		default:
+			return errors.New("invalid extra version")
+		}
+	}
+
 	nonce := cryptography.RandomBytes(validation_type.VALIDATOR_NONCE_SIZE)
 	timestamp := uint64(time.Now().Unix())
 
 	wr = advanced_buffers.NewBufferWriter()
 	wr.WriteUvarint(uint64(validation_type.VALIDATION_VERSION_V0))
+	if votePayload != nil {
+		wr.WriteUvarint(voteOutPayload.Upvotes)
+		wr.WriteUvarint(voteOutPayload.Downvotes)
+	}
 	wr.Write(args.Message)
 	wr.WriteUvarint(args.Size)
 	wr.Write(nonce)
